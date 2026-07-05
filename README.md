@@ -1,5 +1,7 @@
 # System Report Card
 
+**Try it in the browser: <https://bendstok.github.io/Report-Card-Project/>**
+
 Takes a linear system (A, B, C, D) and renders a report card: stability
 verdict, per-mode metrics, pole/zero map, step response. Math from
 [znumerics](https://github.com/bendstok/znumerics), graphics from
