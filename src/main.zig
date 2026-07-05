@@ -25,6 +25,7 @@ const col_stable_region = rl.Color.init(60, 160, 90, 45);
 const col_pole = rl.Color.init(255, 203, 0, 255);
 const col_zero = rl.Color.init(120, 220, 190, 255);
 const col_cl_pole = rl.Color.init(230, 115, 255, 255);
+const col_locus = rl.Color.init(230, 115, 255, 100);
 const col_response = rl.Color.init(102, 191, 255, 255);
 const col_response_dim = rl.Color.init(102, 191, 255, 90);
 const col_setpoint = rl.Color.init(220, 222, 228, 130);
@@ -270,6 +271,10 @@ fn run(alloc: std.mem.Allocator) !void {
                         view = View.compute(&rep, null, null);
                     }
                 }
+                if (rl.isKeyPressed(.l) and pid.active) {
+                    pid.locus_on = !pid.locus_on;
+                    pid.dirty = true;
+                }
             },
             .custom => switch (editor.update()) {
                 .none => {},
@@ -497,6 +502,12 @@ fn drawPoleMap(vp: plot.Viewport, rep: *const report.Report, pid: ?*const pidpan
         // range; clip markers to the panel.
         rl.beginScissorMode(vp.px0, vp.py0, vp.pw, vp.ph);
         defer rl.endScissorMode();
+        // Locus dots go first so the markers overdraw them.
+        if (pid) |pp| {
+            for (pp.locusPoints()) |q| {
+                rl.drawCircle(vp.px(q.re), vp.py(q.im), 1.5, col_locus);
+            }
+        }
         for (rep.poles) |p| plot.drawPoleMarker(vp, p.re, p.im, 6, col_pole);
         for (rep.zeros) |z| plot.drawZeroMarker(vp, z.re, z.im, 6.0, col_zero);
         if (pid) |pp| {
@@ -512,8 +523,11 @@ fn drawPoleMap(vp: plot.Viewport, rep: *const report.Report, pid: ?*const pidpan
     // Marker legend, top-left inside the map.
     rl.drawText("X pole", vp.px0 + 6, vp.py0 + 6, 12, col_pole);
     rl.drawText("O zero", vp.px0 + 6, vp.py0 + 22, 12, col_zero);
-    if (pid != null) {
+    if (pid) |pp| {
         rl.drawText("X closed loop", vp.px0 + 6, vp.py0 + 38, 12, col_cl_pole);
+        if (pp.locusPoints().len > 0) {
+            rl.drawText(". root locus", vp.px0 + 6, vp.py0 + 54, 12, col_cl_pole);
+        }
     }
 }
 

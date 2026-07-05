@@ -26,6 +26,9 @@ zig build run
   Bright curve = honest sim (derivative on measurement, u clamped to ±10,
   anti-windup); magenta X's = linear closed-loop poles. Under saturation the
   two disagree — that's the point.
+- `L` — with the PID panel open: root locus. Dots trace the closed-loop
+  poles as the whole controller is scaled x0.01 .. x100 (Kp:Ki:Kd ratio
+  fixed); the magenta X's sit at x1, so dragging a slider scrubs along it.
 - `Up` / `Down` / `R` — double / halve / auto the response time window
 - mouse — drag poles on the map: conjugate pairs move mirrored, real poles
   slide along the axis; zeros and gain stay fixed and the system re-derives

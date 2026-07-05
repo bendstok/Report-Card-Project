@@ -24,6 +24,18 @@ pub const samples = 501;
 pub const u_min = -10.0;
 pub const u_max = 10.0;
 
+// Root locus: the whole controller is scaled by k (Kp:Ki:Kd ratio fixed)
+// and the closed-loop poles are traced as k sweeps geometrically. k = 1
+// is the currently shown closed-loop pole set.
+const locus_steps = 100;
+const locus_k_min = 0.01;
+const locus_k_max = 100.0;
+/// Enough for every step's roots at the max char-poly degree seen here.
+const locus_cap = locus_steps * 8;
+
+/// f32 is plenty for plotting; halves the Panel's footprint.
+pub const LocusPoint = struct { re: f32, im: f32 };
+
 // --- layout: the panel replaces the bottom report strip --------------------
 
 const x_panel: i32 = 40;
@@ -80,6 +92,11 @@ pub const Panel = struct {
     n_cl: usize = 0,
     cl_verdict: report.Verdict = .stable,
     saturated: bool = false,
+
+    // Root locus (key L).
+    locus_on: bool = false,
+    locus_pts: [locus_cap]LocusPoint = undefined,
+    n_locus: usize = 0,
 
     fn valPtr(self: *Panel, i: usize) *f64 {
         return switch (i) {
@@ -217,6 +234,35 @@ pub const Panel = struct {
             .stable
         else
             .marginal;
+
+        // --- root locus ------------------------------------------------------
+        // Same char poly with the controller scaled by k. Zero controller
+        // means char(k) = s*den for every k: nothing to trace.
+        self.n_locus = 0;
+        if (self.locus_on and c_poly.maxAbs() > 0) {
+            const s_den = s_poly.mul(f.den);
+            const ratio = std.math.pow(
+                f64,
+                locus_k_max / locus_k_min,
+                1.0 / @as(f64, @floatFromInt(locus_steps - 1)),
+            );
+            var k: f64 = locus_k_min;
+            for (0..locus_steps) |_| {
+                const char_k = s_den.add(c_poly.scale(k).mul(num)).trimLeading(tol);
+                k *= ratio;
+                if (char_k.degree() == 0) continue;
+                const lr = try tf.roots(alloc, char_k);
+                defer alloc.free(lr);
+                for (lr) |p| {
+                    if (self.n_locus >= self.locus_pts.len) break;
+                    self.locus_pts[self.n_locus] = .{
+                        .re = @floatCast(p.re),
+                        .im = @floatCast(p.im),
+                    };
+                    self.n_locus += 1;
+                }
+            }
+        }
     }
 
     /// Closed-loop pole markers for the pole map (drawn by main next to the
@@ -224,6 +270,12 @@ pub const Panel = struct {
     pub fn poles(self: *const Panel) []const tf.Complex {
         if (!self.ok) return &.{};
         return self.cl_poles[0..self.n_cl];
+    }
+
+    /// Root-locus dots for the pole map; empty when off or stale.
+    pub fn locusPoints(self: *const Panel) []const LocusPoint {
+        if (!self.ok or !self.locus_on) return &.{};
+        return self.locus_pts[0..self.n_locus];
     }
 
     fn verdictColor(v: report.Verdict) rl.Color {
@@ -271,6 +323,16 @@ pub const Panel = struct {
             "drag the sliders; open-loop response is drawn dim, closed-loop bright",
             x_panel,
             rowY(sliders.len) + 6,
+            14,
+            col_dim,
+        );
+        rl.drawText(
+            if (self.locus_on)
+                "L = hide root locus (controller scaled x0.01 .. x100, ratios fixed; bright X's sit at x1)"
+            else
+                "L = show root locus on the pole map",
+            x_panel,
+            rowY(sliders.len) + 26,
             14,
             col_dim,
         );
