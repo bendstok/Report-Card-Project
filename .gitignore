@@ -1,0 +1,7 @@
+# Zig build artifacts
+.zig-cache/
+zig-out/
+
+# Local copy of fetched dependencies; build.zig.zon pins them by url + hash,
+# so `zig build` re-fetches into the global cache on a fresh clone.
+zig-pkg/

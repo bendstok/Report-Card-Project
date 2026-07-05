@@ -1,0 +1,55 @@
+# Builds the wasm32-emscripten target and publishes zig-out/web to GitHub
+# Pages on every push to main. Enable Pages first: repo Settings -> Pages ->
+# Source: "GitHub Actions".
+name: Deploy web build to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The project tracks a dev-series Zig (see minimum_zig_version in
+      # build.zig.zon). Pin `version` to a specific nightly if master drifts.
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Run unit tests
+        run: zig build test
+
+      # First run installs and activates the emsdk toolchain (fetched as a
+      # Zig package); emcc then links the app against the raylib shell page.
+      - name: Build web bundle
+        run: zig build -Dtarget=wasm32-emscripten -Doptimize=ReleaseFast
+
+      - name: Use the app page as the site index
+        run: cp zig-out/web/report_card.html zig-out/web/index.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: zig-out/web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
