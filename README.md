@@ -45,9 +45,8 @@ zig build -Dtarget=wasm32-emscripten -Doptimize=ReleaseFast   # -> zig-out/web/
 zig build run -Dtarget=wasm32-emscripten                      # serve via emrun
 ```
 
-First run downloads and activates the emsdk toolchain (large, one-time).
-`.github/workflows/deploy-pages.yml` deploys `zig-out/web/` to GitHub Pages
-on push to main — set Pages source to "GitHub Actions" in the repo settings.
+First run downloads and activates the emsdk toolchain (large, one-time). Second runs the
+website locally.
 
 ## Layout
 
