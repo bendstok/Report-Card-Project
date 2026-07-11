@@ -170,10 +170,9 @@ fn currentDesc(
 // instance in Zig 0.16.0, and Io.Threaded does not compile for
 // wasm32-emscripten (its child-process code trips type errors in
 // std.os.emscripten). Anything that reaches that machinery breaks the
-// web build; the known roots here are znumerics' bounds-check
-// std.log.warn (-> defaultLog -> debug_io) and the default panic
-// handler. So for the web target: silence std.log and use the minimal
-// panic handler.
+// web build. znumerics stopped logging in 0.0.5, so the only known
+// root left is the default panic handler — but the std.log silence
+// stays as a guard against any dependency logging in the future.
 pub const panic = if (builtin.os.tag == .emscripten)
     std.debug.FullPanic(webPanic)
 else

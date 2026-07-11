@@ -81,16 +81,17 @@ pub fn analyze(alloc: std.mem.Allocator, sys: SysDesc) !Report {
     std.debug.assert(sys.a.len == n * n);
     std.debug.assert(sys.b.len == n and sys.c.len == n);
 
-    // --- poles via shifted QR (real Schur form) --------------------------
-    // qrAlgorithmComplex is called directly instead of eigenvaluesComplex:
-    // the Arnoldi reduction step can break down early for some inputs.
+    // --- poles via balanced shifted QR (real Schur form) ------------------
+    // Since znumerics 0.0.5, eigenvaluesComplex balances (Parlett-Reinsch)
+    // and reduces to Hessenberg by Householder similarity: deterministic,
+    // no Arnoldi breakdown, and accurate on hand-edited (badly scaled) A.
     const poles = blk: {
         var A = try Mat.initZero(alloc, n, n);
         defer A.deinit();
         for (0..n) |i| {
             for (0..n) |j| try A.set(i, j, sys.a[i * n + j]);
         }
-        break :blk try znum.eigen.qrAlgorithmComplex(alloc, A, 1000, 1e-12, null);
+        break :blk try znum.eigenvaluesComplex(alloc, A, 1000, 1e-12, null);
     };
     errdefer alloc.free(poles);
 
@@ -137,46 +138,21 @@ pub fn analyze(alloc: std.mem.Allocator, sys: SysDesc) !Report {
     errdefer alloc.free(y);
 
     {
-        var ss = try znum.StateSpace.initContinuous(alloc, n);
+        var ss = try znum.StateSpace.fromSlices(alloc, .Continuous, 0.0, n, sys.a, sys.b, sys.c, sys.d);
         defer ss.deinit();
-        for (0..n) |i| {
-            for (0..n) |j| try ss.A.set(i, j, sys.a[i * n + j]);
-            try ss.B.set(i, sys.b[i]);
-            try ss.C.set(i, sys.c[i]);
-        }
-        try ss.D.set(0, sys.d);
 
-        // In-place: ss.A becomes Ad, ss.B becomes Bd.
-        try znum.signal.cont2discrete(alloc, &ss, dt);
-
-        const x = try alloc.alloc(f64, n);
-        defer alloc.free(x);
-        const xn = try alloc.alloc(f64, n);
-        defer alloc.free(xn);
-        @memset(x, 0.0);
-
-        for (0..samples) |k| {
-            t[k] = dt * @as(f64, @floatFromInt(k));
-
-            // y = C*x + D*u with u = 1. Clamp so unstable systems stay finite.
-            var yk = sys.d;
-            for (0..n) |i| yk += sys.c[i] * x[i];
-            if (std.math.isNan(yk)) {
-                yk = 0.0;
-            } else {
-                yk = std.math.clamp(yk, -1e30, 1e30);
+        // znumerics ZOH sim with per-step clamping (NaN -> 0, +/-1e30) so
+        // unstable systems stay finite and plottable. lsim.step() has no
+        // options parameter, so call lsimFn with a constant-1 input.
+        const One = struct {
+            fn u(_: void, _: usize, _: f64, _: znum.Vec) f64 {
+                return 1.0;
             }
-            y[k] = yk;
-
-            // x_{k+1} = Ad*x_k + Bd*u with u = 1
-            for (0..n) |i| {
-                var v = ss.B.atUnsafe(i);
-                for (0..n) |j| v += ss.A.atUnsafe(i, j) * x[j];
-                if (std.math.isNan(v)) v = 0.0;
-                xn[i] = std.math.clamp(v, -1e30, 1e30);
-            }
-            @memcpy(x, xn);
-        }
+        };
+        var res = try znum.lsim.lsimFn(alloc, ss, dt, samples, {}, One.u, null, .{ .clamp = 1e30 });
+        defer res.deinit();
+        @memcpy(t, res.t.data);
+        @memcpy(y, res.y.data);
     }
 
     // A visible unstable mode makes the tail of the response dwarf the

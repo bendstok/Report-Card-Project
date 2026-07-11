@@ -9,7 +9,6 @@
 const std = @import("std");
 const znum = @import("znumerics");
 
-const Mat = znum.Mat;
 pub const Complex = std.math.Complex(f64);
 
 /// Highest polynomial degree representable. Systems passed through here
@@ -111,9 +110,11 @@ pub const Tf = struct {
     den: Poly,
 };
 
-/// State space -> transfer function using the same domain-independent
-/// identity as znumerics' ss2tf (which is written for z but holds in s):
+/// State space -> transfer function via znumerics' ss2tf (domain-aware
+/// since 0.0.5, descending powers of s for a continuous system):
 ///   den = charPoly(A),  num = charPoly(A - B*C^T) + (D - 1)*den.
+/// The allocating TransferFunction is copied into fixed Polys and freed
+/// before returning, per this module's convention.
 pub fn ssToTf(
     alloc: std.mem.Allocator,
     n: usize,
@@ -125,40 +126,29 @@ pub fn ssToTf(
     std.debug.assert(n >= 1 and n <= max_deg);
     std.debug.assert(a.len == n * n and b.len == n and c.len == n);
 
-    var A = try Mat.initZero(alloc, n, n);
-    defer A.deinit();
-    var M = try Mat.initZero(alloc, n, n);
-    defer M.deinit();
-    for (0..n) |i| {
-        for (0..n) |j| {
-            try A.set(i, j, a[i * n + j]);
-            try M.set(i, j, a[i * n + j] - b[i] * c[j]);
-        }
-    }
+    var ss = try znum.StateSpace.fromSlices(alloc, .Continuous, 0.0, n, a, b, c, d);
+    defer ss.deinit();
+    var f = try znum.signal.ss2tf(alloc, ss);
+    defer f.deinit();
+    std.debug.assert(f.num.len == n + 1 and f.den.len == n + 1);
 
-    var den = Poly{ .len = n + 1 };
-    try znum.mat.charPoly(alloc, A, den.coef[0 .. n + 1]);
     var num = Poly{ .len = n + 1 };
-    try znum.mat.charPoly(alloc, M, num.coef[0 .. n + 1]);
-    for (0..n + 1) |i| num.coef[i] += (d - 1.0) * den.coef[i];
-
+    var den = Poly{ .len = n + 1 };
+    @memcpy(num.coef[0 .. n + 1], f.num);
+    @memcpy(den.coef[0 .. n + 1], f.den);
     return .{ .num = num, .den = den };
 }
 
-/// Roots of p as the eigenvalues of its companion matrix, found with the
-/// same shifted-QR routine the app already uses for poles. Caller frees.
-/// A degree-0 polynomial has no roots: returns an empty slice.
+/// Roots of p via znumerics' roots (0.0.5): companion matrix through
+/// balanced shifted QR, with exact deflation of roots at zero. Caller
+/// frees. A degree-0 polynomial has no roots: returns an empty slice.
+///
+/// znumerics only strips exactly-zero leading coefficients, so callers
+/// must still trimLeading with a scaled tolerance first (ssToTf leaves
+/// ~1e-16 leading junk on strictly proper systems).
 pub fn roots(alloc: std.mem.Allocator, p: Poly) ![]Complex {
-    const deg = p.degree();
-    if (deg == 0) return try alloc.alloc(Complex, 0);
-    std.debug.assert(@abs(p.coef[0]) > 0);
-
-    var A = try Mat.initZero(alloc, deg, deg);
-    defer A.deinit();
-    for (0..deg) |j| try A.set(0, j, -p.coef[j + 1] / p.coef[0]);
-    for (1..deg) |i| try A.set(i, i - 1, 1.0);
-
-    return znum.eigen.qrAlgorithmComplex(alloc, A, 1000, 1e-12, null);
+    if (p.degree() > 0) std.debug.assert(@abs(p.coef[0]) > 0);
+    return znum.roots(alloc, p.slice(), 1000, 1e-12);
 }
 
 /// A state-space realization in caller-owned fixed arrays: nothing

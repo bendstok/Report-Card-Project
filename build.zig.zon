@@ -33,8 +33,8 @@
     // internet connectivity.
     .dependencies = .{
         .znumerics = .{
-            .url = "git+https://github.com/bendstok/znumerics#3d528bfa45d96abba24f850dcd3d9d8af672f203",
-            .hash = "znumerics-0.0.2-fJi-FSIkAgCmNQX-K6bOw5ft_nyn8UL2VUVVkjVAAZ5r",
+            .url = "git+https://github.com/bendstok/znumerics#5b988f633b8a67c26930b5a1e275c9b6e2583a33",
+            .hash = "znumerics-0.0.5-fJi-FXh9AwBZCyhjDA0n1nhAETGGJKJPg91P1jWWvDnb",
         },
         .raylib_zig = .{
             .url = "git+https://github.com/raylib-zig/raylib-zig?ref=devel#97be2c7ae646a2f09856604b138c427c0af1b952",

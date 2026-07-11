@@ -163,16 +163,12 @@ pub const Panel = struct {
         std.debug.assert(n >= 1 and n <= tf.max_deg);
         const dt = t_end / @as(f64, @floatFromInt(samples - 1));
 
-        // --- honest sim: ZOH plant + PID_DEO_Sim, sample by sample --------
-        var ss = try znum.StateSpace.initContinuous(alloc, n);
+        // --- honest sim: znumerics' lsimFn with the PID in the loop -------
+        // lsimFn ZOH-discretizes a clone and runs sample by sample; the
+        // clamp option keeps unstable closed loops finite (NaN -> 0,
+        // +/-1e30), matching what the old hand-rolled loop did.
+        var ss = try znum.StateSpace.fromSlices(alloc, .Continuous, 0.0, n, sys.a, sys.b, sys.c, sys.d);
         defer ss.deinit();
-        for (0..n) |i| {
-            for (0..n) |j| try ss.A.set(i, j, sys.a[i * n + j]);
-            try ss.B.set(i, sys.b[i]);
-            try ss.C.set(i, sys.c[i]);
-        }
-        try ss.D.set(0, sys.d);
-        try znum.signal.cont2discrete(alloc, &ss, dt);
 
         var pid = znum.control.PID_DEO_Sim{
             .K_p = self.kp,
@@ -186,31 +182,39 @@ pub const Panel = struct {
             .prev_y = 0.0,
         };
 
-        self.saturated = false;
-        var x = [_]f64{0} ** tf.max_deg;
-        var xn = [_]f64{0} ** tf.max_deg;
-        var u: f64 = 0.0;
-        for (0..samples) |k| {
-            // With D != 0 the loop y -> PID -> u -> y would be algebraic;
-            // using the previous input in the feedthrough term breaks it
-            // with one sample of delay. Presets and most customs have D = 0.
-            var yk = sys.d * u;
-            for (0..n) |i| yk += sys.c[i] * x[i];
-            if (std.math.isNan(yk)) yk = 0.0;
-            yk = std.math.clamp(yk, -1e30, 1e30);
-            self.y[k] = yk;
+        // The controller runs inside the input callback: it reads the
+        // measurement off the pre-step state, stores the panel's y, and
+        // returns u. With D != 0 the loop y -> PID -> u -> y would be
+        // algebraic; keeping the previous input in the feedthrough term
+        // breaks it with one sample of delay. Presets and most customs
+        // have D = 0. (LsimResult.y uses the current-u feedthrough, so
+        // the panel keeps its own y written here.)
+        const Ctx = struct {
+            pid: *znum.control.PID_DEO_Sim,
+            sys: *const report.SysDesc,
+            panel: *Panel,
+            u_prev: f64 = 0.0,
 
-            u = pid.compute(1.0, yk);
-            if (u >= u_max - 1e-12 or u <= u_min + 1e-12) self.saturated = true;
+            fn input(ctx: *@This(), k: usize, t_k: f64, x: znum.Vec) f64 {
+                _ = t_k;
+                const s = ctx.sys;
+                var yk = s.d * ctx.u_prev;
+                for (0..s.n) |i| yk += s.c[i] * x.atUnsafe(i);
+                if (std.math.isNan(yk)) yk = 0.0;
+                yk = std.math.clamp(yk, -1e30, 1e30);
+                ctx.panel.y[k] = yk;
 
-            for (0..n) |i| {
-                var v = ss.B.atUnsafe(i) * u;
-                for (0..n) |j| v += ss.A.atUnsafe(i, j) * x[j];
-                if (std.math.isNan(v)) v = 0.0;
-                xn[i] = std.math.clamp(v, -1e30, 1e30);
+                const uk = ctx.pid.compute(1.0, yk);
+                if (uk >= u_max - 1e-12 or uk <= u_min + 1e-12) ctx.panel.saturated = true;
+                ctx.u_prev = uk;
+                return uk;
             }
-            @memcpy(x[0..n], xn[0..n]);
-        }
+        };
+
+        self.saturated = false;
+        var ctx = Ctx{ .pid = &pid, .sys = &sys, .panel = self };
+        var res = try znum.lsim.lsimFn(alloc, ss, dt, samples, &ctx, Ctx.input, null, .{ .clamp = 1e30 });
+        res.deinit();
 
         // --- linear closed-loop poles --------------------------------------
         const f = try tf.ssToTf(alloc, n, sys.a, sys.b, sys.c, sys.d);
